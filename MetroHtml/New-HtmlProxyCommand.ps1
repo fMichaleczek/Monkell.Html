@@ -139,14 +139,14 @@ function New-HtmlProxyCommand {
             if ($PSBoundParameters.ContainsKey('RemainingArguments')) {
                 foreach($RemainingArgument in $PSBoundParameters["RemainingArguments"]) {
                     if ($RemainingArgument -is [scriptblock]) {
-                        $PSBoundParameters["AppendNode"] = $RemainingArgument
-                        $AppendNode = $RemainingArgument
+                        $PSBoundParameters["Append"] = $RemainingArgument
+                        $Append = $RemainingArgument
                     }  
                     elseif ($RemainingArgument -is [string]) {
                         $PSBoundParameters["TextContent"] += $RemainingArgument
                         $TextContent = $PSBoundParameters["TextContent"]
                     }
-                    else {
+                    elseif ($null -ne $RemainingArgument) {
                         $PSBoundParameters["TextContent"] += $RemainingArgument.ToString()
                         $TextContent = $PSBoundParameters["TextContent"]
                     }
@@ -164,7 +164,9 @@ function New-HtmlProxyCommand {
     $Begins = @()
     
     $Begins += '      $PSBoundParametersKeys = $PSBoundParameters.Keys '
-    
+    $Begins += '    $null = $PSBoundParameters.Remove("Class")'
+	$Begins += "    if (`$Class.Count -gt 0) { `$PSBoundParameters[`"ClassName`"] = (`$Class -join `" `").Trim() }" 
+	
     if ($PSBoundParameters["AddClass"]) { 
         $Begins += ( "      `$PSBoundParameters.ClassName =  [string[]]@(`$PSBoundParameters.ClassName, '{0}')" -f $($AddClass -join ' ')  ) + "`n"
     }

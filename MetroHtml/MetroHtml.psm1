@@ -712,12 +712,15 @@ $HelperClassParameters = @(
 
 ###########################################################
 
-Get-ChildItem -Path $PSScriptRoot -Recurse -Filter "*.ps1" | Foreach {
+. "$PSScriptRoot\New-HtmlProxyCommand.ps1"
+
+Get-ChildItem -Path "$PSScriptRoot\Rules" -Recurse -Filter "*.ps1" | Foreach {
     . $_.FullName
 }
 
 Get-Item function:\New-Metro* | Foreach {
-    $AliasName = $_.Noun.Replace("Metro","Metro.")
+    "function $($_.Name) {`n" + $_.Definition + "`n}" | Set-Content -Path "$PSScriptRoot\Functions\$($_.Name).ps1"
+	$AliasName = $_.Noun.Replace("Metro","Metro.")
     New-Alias -Name $AliasName -Value $_.Name -Force
 }
 

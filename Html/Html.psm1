@@ -1,12 +1,9 @@
 ﻿Add-Type -Path "$PSScriptRoot\AngleSharp.dll"
 
-# Invoke-WebPageParser -url "https://en.wikipedia.org/wiki/List_of_The_Big_Bang_Theory_episodes" -selector "tr.vevent td:nth-child(3)"
-# Invoke-WebPageParser -url http://www.powershellmagazine.com/ -Selector "div.content-loop div.post h2 a" | select TextContent, href
-
 function Get-HtmlTag {
     $Tags = @()
     $Type = [AngleSharp.Configuration].Assembly.GetType("AngleSharp.Html.TagNames")
-    $Members = $Type.GetMembers([System.Reflection.BindingFlags]'Public,Static').Where({ $_.Name -notlike "All*" })
+    $Members = $Type.GetMembers([System.Reflection.BindingFlags]'Public,Static') | Where-Object { $_.Name -notlike "All*" }
     foreach($Member in $Members) {
         $Tags += [pscustomobject]@{
             Name = $Member.Name
@@ -71,13 +68,13 @@ function New-HtmlDocument {
     [CmdletBinding()]
     Param(
         [Parameter()]
-        [Alias('Append')]
+        [Alias('AppendNode')]
         [scriptblock]
-        $AppendNode
+        $Append
     )
     $Document = $script:HtmlDocument.Clone()
-    if ($AppendNode -ne $null) { 
-        $Nodes = @( & $AppendNode )
+    if ($Append -ne $null) { 
+        $Nodes = @( & $Append )
         if ($Nodes.Count -gt 0) { 
             foreach ($Node in $Nodes) { 
                 if ($Node.GetType().FullName -eq 'AngleSharp.Dom.Html.HtmlHeadElement') {
@@ -102,8 +99,20 @@ function New-HtmlDocument {
             }
         }
     }
-    $Document | Add-Member -MemberType ScriptMethod -Name ToFlatHtml -Value   { $this.ToHtml([AngleSharp.Html.HtmlMarkupFormatter]::Instance) }
-    $Document | Add-Member -MemberType ScriptMethod -Name ToPrettyHtml -Value { $this.ToHtml([AngleSharp.Html.PrettyMarkupFormatter]::new())  }
+	
+    $Document | Add-Member -MemberType ScriptMethod -Name ToFlatHtml -Value   { 
+		$StringWriter = [System.IO.StringWriter]::new()
+		$this.ToHtml($StringWriter, [AngleSharp.Html.HtmlMarkupFormatter]::Instance)
+		$StringWriter.ToString()
+		$StringWriter.Close()
+		
+	}
+    $Document | Add-Member -MemberType ScriptMethod -Name ToPrettyHtml -Value { 
+		$StringWriter = [System.IO.StringWriter]::new()
+		$this.ToHtml($StringWriter, [AngleSharp.Html.PrettyMarkupFormatter]::new())  
+		$StringWriter.ToString()
+		$StringWriter.Close()
+	}
     $Document
 }
 
@@ -158,9 +167,9 @@ function New-HtmlPage {
         # [string] $TypographySet,
 
         [Parameter()]
-        [Alias('Append')]
+        [Alias('AppendNode')]
         [scriptblock]
-        $AppendNode,
+        $Append,
         
         [Parameter()]
         [switch] $AsHtml,
@@ -177,8 +186,8 @@ function New-HtmlPage {
     Begin {
         foreach($RemainingArgument in $PSBoundParameters.RemainingArguments) {
             if ($RemainingArgument -is [scriptblock]) {
-                $PSBoundParameters.AppendNode = $RemainingArgument
-                $AppendNode = $RemainingArgument
+                $PSBoundParameters.Append = $RemainingArgument
+                $Append = $RemainingArgument
             }
         }
         $PSBoundParameters.Remove("RemainingArguments") | Out-Null
@@ -187,7 +196,7 @@ function New-HtmlPage {
     Process {
        $PageTitle = $Title
        $PageBaseUrl = $BaseUrl
-       $PageAppendNode = $AppendNode
+       $PageAppendNode = $Append
        
        $Document = Html.Document {
             Html.Head -Language $Language {
@@ -227,7 +236,7 @@ function New-HtmlPage {
                     Html.Script -Type "text/javascript" -TextContent ("`n" + ( $JavascriptInline -join "`n" ) + "`n"  )
                 }
             }
-            Html.Body -Class $BodyClass -Style $BodyStyle -AppendNode $PageAppendNode
+            Html.Body -Class $BodyClass -Style $BodyStyle -Append $PageAppendNode
         }
         
         if ($AsHtml -eq $true) {
@@ -246,7 +255,6 @@ function New-HtmlPage {
         }
     }
 }
-
 
 function New-HtmlText {
     [CmdletBinding()]
@@ -295,35 +303,18 @@ function New-HtmlFunction {
     if ($PSBoundParameters.ContainsKey("RemainingArguments")) {
         foreach($RemainingArgument in $PSBoundParameters["RemainingArguments"]) {
             if ($RemainingArgument -is [scriptblock]) {
-                $AppendNode = $RemainingArgument
+                $Append = $RemainingArgument
             }
             elseif ($RemainingArgument -is [string]) {
                 $PSBoundParameters["TextContent"] += $RemainingArgument
             }
-            else {
+            elseif ($null -ne $RemainingArgument) {
                 $PSBoundParameters["TextContent"] += $RemainingArgument.ToString()
             }
         }
         $null = $PSBoundParameters.Remove("RemainingArguments")
     }
-    $PSBoundParametersKeys = $PSBoundParameters.Keys
-    
-    # Initialize AppendNode
-    # if ($PSBoundParameters.ContainsKey("AppendNode") {
-        # $AppendNode = $PSBoundParameters["AppendNode"]
-    # }
-    # else {
-        # $AppendNode = $null
-    # }
-    
-    # Initialize AppendNode
-    # if ($PSBoundParameters.ContainsKey("PrependNode")) {
-        # $PrependNode = $PSBoundParameters["PrependNode"]
-    # }
-    # else {
-        # $PrependNode = $null
-    # }
-    
+	$null = $PSBoundParameters.Remove("Class")
 '@
 
     $Process += @'
@@ -335,14 +326,14 @@ function New-HtmlFunction {
     $Process += @'
     # Set HtmlElement Property from Not Null Parameter
     foreach ($Key in @($PSBoundParameters.Keys)) {
-        $HtmlElement.$Key = $PSBoundParameters[$Key]
+       $HtmlElement.$Key = $PSBoundParameters[$Key]
     }
     
 '@
     
     # Build Command Parameters from Object Properties
-    $ConstructorArgumentsName = $Type.GetConstructors()[0].GetParameters() | Select -Expand Name
-    $Properties = $Type.GetProperties() | Where { $_.CanWrite -and $_.Name -notin $ConstructorArgumentsName } # | Select Name, PropertyType, DeclaringType
+    $ConstructorParametersName = $Type.GetConstructors()[0].GetParameters() | Select -Expand Name
+    $Properties = $Type.GetProperties() | Where { $_.CanWrite -and $_.Name -notin $ConstructorParametersName } 
     
     $DefaultParameter = "[Parameter()]`n      "
     foreach($Property in $Properties) {
@@ -361,8 +352,8 @@ function New-HtmlFunction {
         }
         # Convert ClassName String of Array to String
         elseif ($Property.Name -eq "ClassName") {
-            $Params += "      $DefaultParameter[Alias('{2}')]`n      [string[]]`n      `${0}" -f ($Property.Name, $Property.PropertyType, "Class")
-            $Begin  += "    if (`"{0}`"  -in `$PSBoundParametersKeys) {{ `$PSBoundParameters[`"{0}`"] = (`${0} -join `" `").Trim() }}" -f $Property.Name 
+            $Params += "      $DefaultParameter[Alias('{0}')]`n      [string[]]`n      `$Class" -f ($Property.Name, $Property.PropertyType)
+            $Begin  += "    if (`$Class.Count -gt 0) {{ `$PSBoundParameters[`"{0}`"] = (`$Class -join `" `").Trim() }}" -f $Property.Name 
         }
         elseif ($Property.PropertyType.FullName -eq 'AngleSharp.Dom.Html.Alignment') {
             # Do Nothing. Maybe need a fix.
@@ -373,67 +364,77 @@ function New-HtmlFunction {
     }
    
     # Add Attributes
-    $Params += "      $DefaultParameter[hashtable]`n      `$Attributes"
-    $Begin  += '    if ("Attributes" -in $PSBoundParametersKeys) { $null = $PSBoundParameters.Remove("Attributes") }'
+    $Params += "      $DefaultParameter`n      [hashtable]`n      `$Attributes"
+    $Begin  += '    $null = $PSBoundParameters.Remove("Attributes") '
     $Process+= '    if ($Attributes -ne $null) { $Attributes.GetEnumerator() | Foreach { $null = $HtmlElement.SetAttribute($_.Key, $_.Value) } }'
     
     # Add Style
-    $Params  += "      $DefaultParameter[Alias('CSS')]`n      [hashtable]`n      `$Style"
-    $Begin   += '    if ("Style" -in $PSBoundParametersKeys) { $null = $PSBoundParameters.Remove("Style") }'
-    $Process += '    if ($Style -ne $null) { $Styles = $Style.GetEnumerator() | Foreach { "{0} : {1}; " -f $_.Key, $_.Value } ; $null = $HtmlElement.SetAttribute("style", $Styles -join "") } '
+    $Params  += "      $DefaultParameter`n      [Alias('CSS')]`n      [hashtable]`n      `$Style"
+    $Begin   += '    $null = $PSBoundParameters.Remove("Style")'
+    $Process += '    if ($Style.Count -gt 0) { $Styles = $Style.GetEnumerator() | Foreach { "{0} : {1}; " -f $_.Key, $_.Value } ; $null = $HtmlElement.SetAttribute("style", $Styles -join "") } '
     
          
     # Add Data
     $Params  += "      $DefaultParameter`n      [hashtable]`n      `$Data"
-    $Begin   += '    if ("Data" -in $PSBoundParametersKeys) { $null = $PSBoundParameters.Remove("Data") }'
-    $Process += '    if ($Data -ne $null) { $Datas = $Data.GetEnumerator() | Foreach { $null = $HtmlElement.SetAttribute("data-$($_.Key)", $_.Value) } }'
+    $Begin   += '    $null = $PSBoundParameters.Remove("Data") '
+    $Process += '    if ($Data -ne $null) { $Datas = $Data.GetEnumerator() | Foreach { $null = $HtmlElement.SetAttribute("data-$($_.Key.ToString().ToLower())", $_.Value) } }'
    
-    # Add AppendNode
-    $Params  += "      $DefaultParameter`n      [Alias('Append')]`n      [scriptblock]`n      `$AppendNode"
-    $Begin   += '    if ("AppendNode" -in $PSBoundParametersKeys) { $null = $PSBoundParameters.Remove("AppendNode") }'
+    # Add Append
+    $Params  += "      $DefaultParameter`n              [Alias('AppendNode')]`n      `$Append"
+    $Begin   += '      $null = $PSBoundParameters.Remove("Append") '
     $End += @'
-    if ($AppendNode -ne $null) { 
-        $Nodes = @( & $AppendNode )
-        foreach ($Node in $Nodes) {
-            if ($null -ne $Node) {
-                $NodeTypeFullName = $Node.Gettype().FullName
-                if ($NodeTypeFullName -eq "System.String") {
-                    $String = New-HtmlText -Text $Node
-                    $null = $HtmlElement.Append($String) 
-                }
-                elseif ($NodeTypeFullName -like "AngleSharp.*") { 
-                    $null = $HtmlElement.Append($Node) 
-                }
-                else {
-                    $String = New-HtmlText -Text ( $Node.ToString() )
-                    $null = $HtmlElement.Append($String) 
+    if ($Append -ne $null) { 
+        if ($Append -is [scriptblock]) { 
+            $Nodes = @( & $Append )
+            foreach ($Node in $Nodes) {
+                if ($null -ne $Node) {
+                    $NodeTypeFullName = $Node.Gettype().FullName
+                    if ($NodeTypeFullName -eq "System.String") {
+                        $String = New-HtmlText -Text $Node
+                        $null = $HtmlElement.Append($String) 
+                    }
+                    elseif ($NodeTypeFullName -like "AngleSharp.*") { 
+                        $null = $HtmlElement.Append($Node) 
+                    }
+                    else {
+                        $String = New-HtmlText -Text ( $Node.ToString() )
+                        $null = $HtmlElement.Append($String) 
+                    }
                 }
             }
         }
+        elseif ($Append -is [string]) {
+            $String = New-HtmlText -Text $Append
+            $null = $HtmlElement.Append($String) 
+        }
     }
-'@
-    
-          
+'@ 
                  
-    # Add PrependNode
-    $Params  += "      $DefaultParameter`n      [Alias('Prepend')]`n      [scriptblock]`n      `$PrependNode"
-    $Begin   += '    if ("PrependNode" -in $PSBoundParametersKeys) { $null = $PSBoundParameters.Remove("PrependNode") }'
+    # Add Prepend
+    $Params  += "      $DefaultParameter`n      `$Prepend"
+    $Begin   += '      $null = $PSBoundParameters.Remove("Prepend") '
     $End += @'
-    if ($PrependNode -ne $null) { 
-        $Nodes = @( & $PrependNode )
-        foreach ($Node in $Nodes) { 
-            $NodeTypeFullName = $Node.Gettype().FullName
-            if ($NodeTypeFullName -match "^AngleSharp") { 
-                $null = $HtmlElement.Prepend($Node) 
+    if ($Prepend -ne $null) { 
+        if ($Prepend -is [scriptblock]) { 
+            $Nodes = @( & $Prepend )
+            foreach ($Node in $Nodes) { 
+                $NodeTypeFullName = $Node.Gettype().FullName
+                if ($NodeTypeFullName -match "^AngleSharp") { 
+                    $null = $HtmlElement.Prepend($Node) 
+                }
+                elseif ($NodeTypeFullName -eq "System.String") {
+                    $String = New-HtmlText -Text $Node
+                    $null = $HtmlElement.Prepend($String) 
+                }
+                elseif ($null -ne $Node) {
+                    $String = New-HtmlText -Text ( $Node.ToString() )
+                    $null = $HtmlElement.Prepend($String) 
+                }
             }
-            elseif ($NodeTypeFullName -eq "System.String") {
-                $String = New-HtmlText -Text $Node
-                $null = $HtmlElement.Prepend($String) 
-            }
-            else {
-                $String = New-HtmlText -Text ( $Node.ToString() )
-                $null = $HtmlElement.Prepend($String) 
-            }
+        }
+        elseif ($Prepend -is [string]) {
+            $String = New-HtmlText -Text $Prepend
+            $null = $HtmlElement.Prepend($String) 
         }
     }
 '@
@@ -486,15 +487,13 @@ function New-HtmlFunction {
     }
 }
 
-############################################################
-
-
 # Script Variable used by all function to create Element
 $script:HtmlDocument = Invoke-WebParser '<!DOCTYPE html>'
 
 foreach($Tag in Get-HtmlTag) {
     $FunctionName = "New-Html{0}" -f $Tag.Name
     $Function = New-HtmlFunction -FunctionName $FunctionName -TagName $Tag.Value 
+	$Function | Set-Content -Path "$PSScriptRoot\Functions\$FunctionName.ps1"
     $Function | Invoke-Expression
 }
 
@@ -502,4 +501,4 @@ Get-Item function:\New-Html* | Foreach {
     New-Alias -Name $_.Noun.Replace("Html","Html.") -Value $_.Name -Force
 }
 
-Export-ModuleMember -Function New-Html*,Get-Html* -Alias Html*
+Export-ModuleMember -Function Invoke-WebParser, New-Html*,Get-Html* -Alias Html*
